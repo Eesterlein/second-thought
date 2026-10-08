@@ -23,8 +23,9 @@ async function callGuide(body) {
 // history: [{ role: "user" | "assistant", content: string }]
 // Assistant turns hold the raw JSON text Claude returned. The server wraps
 // up the reflection on its own after enough questions, or when close is set.
-export function nextReflection(history, { close = false } = {}) {
-  return callGuide({ kind: "reflect", history, close });
+// recent: past intentions from the notebook, so the guide can follow up.
+export function nextReflection(history, { close = false, recent = [] } = {}) {
+  return callGuide({ kind: "reflect", history, close, recent });
 }
 
 export async function summarize(transcript) {
@@ -35,7 +36,12 @@ export async function summarize(transcript) {
   return data;
 }
 
-export async function writingQuestions(opening) {
-  const { data } = await callGuide({ kind: "write", opening });
+export async function writingQuestions(opening, recent = []) {
+  const { data } = await callGuide({ kind: "write", opening, recent });
+  return data;
+}
+
+export async function lookBack(entries, period) {
+  const { data } = await callGuide({ kind: "lookback", entries, period });
   return data;
 }

@@ -6,11 +6,14 @@ import { createClient } from "npm:@supabase/supabase-js@2.116.0";
 import {
   MODEL, MAX_QUESTIONS, REFLECT_SYSTEM, REFLECT_SCHEMA, CLOSE_NOTE,
   SUMMARY_SYSTEM, SUMMARY_SCHEMA, WRITE_SYSTEM, WRITE_SCHEMA,
+  LOOKBACK_SYSTEM, LOOKBACK_SCHEMA, memoryBlock,
 } from "./prompts.ts";
 
 const DAILY_CALL_LIMIT = 60; // roughly 10 reflections a day
 const MAX_TEXT = 4000; // characters per message
 const MAX_TURNS = 24;
+const MAX_RECENT = 5; // past intentions the guide may see
+const MAX_LOOKBACK = 40; // entries in one look-back
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
@@ -39,6 +42,25 @@ function text(value: unknown): string {
   return value;
 }
 
+function short(value: unknown, max = 300): string {
+  return typeof value === "string" ? value.slice(0, max) : "";
+}
+
+// Past intentions from the person's notebook (sent by the app, newest first).
+function recentMemory(value: unknown) {
+  if (!Array.isArray(value)) return "";
+  return memoryBlock(
+    value.slice(0, MAX_RECENT)
+      .map((r) => ({
+        date: short(r?.date, 40),
+        title: short(r?.title, 80),
+        takeaway: short(r?.takeaway),
+        followUp: short(r?.followUp, 300),
+      }))
+      .filter((r) => r.takeaway),
+  );
+}
+
 async function askJson(
   system: string,
   schema: Record<string, unknown>,
@@ -57,7 +79,7 @@ async function askJson(
   return { data: JSON.parse(block.text), raw: block.text };
 }
 
-function reflect(body: { history?: unknown; close?: unknown }) {
+function reflect(body: { history?: unknown; close?: unknown; recent?: unknown }) {
   const history = body.history;
   if (!Array.isArray(history) || history.length === 0 || history.length > MAX_TURNS) {
     throw new BadRequest("Invalid conversation.");
@@ -74,7 +96,7 @@ function reflect(body: { history?: unknown; close?: unknown }) {
     // Mid-conversation system message: tells the guide to wrap up.
     messages.push({ role: "system", content: CLOSE_NOTE } as unknown as Anthropic.MessageParam);
   }
-  return askJson(REFLECT_SYSTEM, REFLECT_SCHEMA, messages);
+  return askJson(REFLECT_SYSTEM + recentMemory(body.recent), REFLECT_SCHEMA, messages);
 }
 
 function summary(body: { transcript?: unknown }) {
@@ -88,8 +110,25 @@ function summary(body: { transcript?: unknown }) {
   return askJson(SUMMARY_SYSTEM, SUMMARY_SCHEMA, [{ role: "user", content }]);
 }
 
-function write(body: { opening?: unknown }) {
-  return askJson(WRITE_SYSTEM, WRITE_SCHEMA, [{ role: "user", content: text(body.opening) }]);
+function write(body: { opening?: unknown; recent?: unknown }) {
+  return askJson(WRITE_SYSTEM + recentMemory(body.recent), WRITE_SCHEMA, [
+    { role: "user", content: text(body.opening) },
+  ]);
+}
+
+function lookback(body: { entries?: unknown; period?: unknown }) {
+  const entries = body.entries;
+  if (!Array.isArray(entries) || entries.length === 0) throw new BadRequest("No entries to look back on.");
+  const lines = entries.slice(0, MAX_LOOKBACK).map((e) => [
+    `## ${short(e?.date, 40)} (${short(e?.timeOfDay, 20)}) — ${short(e?.title, 80)}`,
+    `Feelings: ${Array.isArray(e?.feelings) ? e.feelings.slice(0, 6).map((f: unknown) => short(f, 30)).join(", ") : ""}`,
+    `What was on my mind: ${short(e?.opening, 500)}`,
+    `Notes: ${short(e?.notes, 1200)}`,
+    e?.takeaway ? `Intention: ${short(e.takeaway)}` : "",
+    e?.followUp ? `Follow-through: ${short(e.followUp)}` : "",
+  ].filter(Boolean).join("\n"));
+  const content = `Period: ${short(body.period, 40)}\n\n${lines.join("\n\n")}`;
+  return askJson(LOOKBACK_SYSTEM, LOOKBACK_SCHEMA, [{ role: "user", content }]);
 }
 
 Deno.serve(async (req) => {
@@ -114,7 +153,7 @@ Deno.serve(async (req) => {
 
   try {
     const body = await req.json();
-    const handlers = { reflect, summary, write } as const;
+    const handlers = { reflect, summary, write, lookback } as const;
     const handler = handlers[body?.kind as keyof typeof handlers];
     if (!handler) throw new BadRequest("Unknown request.");
     return json(await handler(body));

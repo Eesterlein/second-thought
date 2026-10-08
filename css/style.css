@@ -69,7 +69,7 @@ h2 { font-size: 1.25rem; margin-top: 2em; }
 .muted, .fineprint { color: var(--muted); }
 .fineprint { font-size: 0.85rem; }
 
-textarea, input[type="password"], input[type="email"] {
+textarea, input[type="password"], input[type="email"], input[type="time"] {
   width: 100%;
   border: 1px solid var(--line);
   border-radius: 12px;
@@ -161,3 +161,37 @@ label { display: block; font-weight: 500; margin-bottom: 6px; }
 .auth { max-width: 420px; }
 .auth input { margin-bottom: 14px; }
 .auth-links { display: flex; flex-wrap: wrap; gap: 16px; }
+
+/* Check-in on a past intention */
+.checkin {
+  margin: 20px 0 8px;
+  padding: 16px;
+  border-radius: 16px;
+  background: var(--guide-bg);
+}
+.checkin p { margin: 0 0 8px; }
+.checkin-when { color: var(--muted); font-size: 0.9rem; }
+.checkin-takeaway { font-family: Fraunces, Georgia, serif; font-size: 1.1rem; }
+.checkin-ask { font-weight: 500; }
+.checkin textarea { margin-top: 12px; }
+
+.choices { display: flex; flex-wrap: wrap; gap: 8px; margin: 8px 0 12px; }
+.chip {
+  border: 1px solid var(--line);
+  background: var(--page);
+  border-radius: 999px;
+  padding: 6px 14px;
+  cursor: pointer;
+}
+.chip[aria-pressed="true"] { border-color: var(--accent); background: var(--accent); color: var(--accent-ink); }
+
+/* Look back */
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; margin: 16px 0; }
+.stat { background: var(--page); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px; }
+.stat .num { font-family: Fraunces, Georgia, serif; font-size: 1.6rem; display: block; }
+.stat .label { color: var(--muted); font-size: 0.85rem; }
+.insight { background: var(--guide-bg); border-radius: 16px; padding: 16px 18px; margin-top: 8px; }
+.insight ul { padding-left: 20px; }
+.insight .question { margin-top: 12px; }
+.follow { color: var(--muted); font-size: 0.9rem; }
+input[type="time"] { width: auto; }

@@ -15,6 +15,7 @@
     <button class="brand" data-nav="home">Second <em>Thought</em></button>
     <nav id="nav" hidden>
       <button data-nav="notebook">Notebook</button>
+      <button data-nav="lookback">Look back</button>
       <button data-nav="settings">Settings</button>
     </nav>
   </header>
@@ -50,11 +51,31 @@
     <!-- Home: today's prompt -->
     <section id="view-home" class="view" hidden>
       <p class="date" id="today"></p>
+
+      <!-- Follow-up on a recent intention -->
+      <div id="checkin" class="checkin" hidden>
+        <p class="checkin-when" id="checkin-when"></p>
+        <p class="checkin-takeaway" id="checkin-takeaway"></p>
+        <p class="checkin-ask">How did it go?</p>
+        <div class="choices" role="group" aria-label="How did it go?">
+          <button class="chip" data-follow="done">I did it</button>
+          <button class="chip" data-follow="partly">Partly</button>
+          <button class="chip" data-follow="not_yet">Not yet</button>
+        </div>
+        <div id="checkin-more" hidden>
+          <textarea id="checkin-note" rows="2" placeholder="Anything you want to add? (optional)"></textarea>
+          <div class="actions">
+            <button class="primary" id="checkin-save">Save</button>
+          </div>
+        </div>
+        <button class="link" id="checkin-skip">Skip</button>
+      </div>
+
       <h1>What's on your mind today?</h1>
       <textarea id="opening" class="paper" rows="4" placeholder="A sentence or two is plenty."></textarea>
       <div class="actions">
-        <button class="primary" id="start-reflect">Reflect with a guide</button>
-        <button class="secondary" id="start-write">Write it myself</button>
+        <button class="primary" id="start-write">Write it out</button>
+        <button class="secondary" id="start-reflect">Talk it through</button>
       </div>
       <p class="fineprint">Second Thought is a journal, not therapy. Your entries are private to your account.</p>
     </section>
@@ -71,8 +92,8 @@
         </div>
       </form>
       <div id="reflect-done" class="actions" hidden>
-        <button class="primary" id="save-reflection">Save to notebook</button>
-        <button class="secondary" id="journal-it">Journal it in my own words</button>
+        <button class="primary" id="journal-it">Write it in my own words</button>
+        <button class="secondary" id="save-reflection">Just save the summary</button>
       </div>
     </section>
 
@@ -84,6 +105,8 @@
       <div id="write-questions"></div>
       <label class="free-label" for="write-free">Anything else?</label>
       <textarea id="write-free" class="paper" rows="4"></textarea>
+      <label class="free-label" for="write-takeaway">One thing I want to remember or do next</label>
+      <textarea id="write-takeaway" class="paper" rows="2" placeholder="I'll check back with you on this next time."></textarea>
       <div class="actions">
         <button class="primary" id="save-write">Save to notebook</button>
       </div>
@@ -94,6 +117,20 @@
       <h1>Notebook</h1>
       <ul id="entries" class="entries"></ul>
       <p id="empty" class="muted" hidden>No entries yet. Your reflections will show up here.</p>
+    </section>
+
+    <!-- Look back: patterns over time -->
+    <section id="view-lookback" class="view" hidden>
+      <h1>Look back</h1>
+      <div class="choices" role="group" aria-label="Period">
+        <button class="chip" data-period="7" aria-pressed="true">Past week</button>
+        <button class="chip" data-period="30" aria-pressed="false">Past month</button>
+      </div>
+      <div id="lookback-stats"></div>
+      <div class="actions">
+        <button class="primary" id="lookback-ai">What do you notice?</button>
+      </div>
+      <div id="lookback-insight"></div>
     </section>
 
     <!-- Entry detail -->
@@ -111,6 +148,13 @@
       <p>Signed in as <strong id="signed-in-as"></strong></p>
       <div class="actions">
         <button class="secondary" id="sign-out">Sign out</button>
+      </div>
+      <h2>Daily reminder</h2>
+      <p class="fineprint">Add a gentle daily reminder to your phone or computer calendar. It links straight back here.</p>
+      <label for="reminder-time">Time</label>
+      <input id="reminder-time" type="time" value="20:30">
+      <div class="actions">
+        <button class="secondary" id="reminder-add">Add to my calendar</button>
       </div>
       <h2>Your data</h2>
       <p class="fineprint">Your entries are saved to your account. You can also download a copy anytime.</p>

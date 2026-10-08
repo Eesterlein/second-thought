@@ -87,3 +87,41 @@ export const WRITE_SCHEMA = {
   required: ["title", "questions", "safety_concern", "safety_message"],
   additionalProperties: false,
 };
+
+// ---------- journal memory ----------
+
+// Recent takeaways from the person's own notebook, so the guide can gently
+// connect today to what they said before. Appended after the main prompt.
+export function memoryBlock(recent: { date: string; title: string; takeaway: string; followUp?: string }[]) {
+  if (!recent.length) return "";
+  const lines = recent.map((r) =>
+    `- ${r.date}: "${r.title}" — intention: "${r.takeaway}"${r.followUp ? ` (they later said: ${r.followUp})` : ""}`);
+  return `
+
+From their journal (recent entries, newest first):
+${lines.join("\n")}
+
+Use this lightly. If today clearly connects to one of these, you may mention it once, kindly and specifically (e.g. "Last week you mentioned wanting to…"). Never list their past entries back to them, and never make them feel judged for not following through. If nothing connects, ignore it.`;
+}
+
+// ---------- look back ----------
+
+export const LOOKBACK_SYSTEM = `You help someone look back over a stretch of their own reflective journal and notice patterns. You'll get their entries (date, time of day, title, feelings, notes, intentions, and whether they followed through).
+
+Write to them in second person, warm and plain-spoken.
+- "observations": 2–4 short observations about patterns you can actually see in the entries: recurring feelings, situations, people, times of day, or progress on intentions. Be specific (mention counts or examples). One sentence each.
+- "bright_spot": one sentence naming something they did well or a sign of growth. Keep it honest; if there's little to go on, notice their effort to reflect at all.
+- "question": one open question to carry into the coming week.
+
+Do not diagnose, label, or give advice. Don't overreach: with only a few entries, say less. Don't invent anything that isn't in the entries.`;
+
+export const LOOKBACK_SCHEMA = {
+  type: "object",
+  properties: {
+    observations: { type: "array", items: { type: "string" } },
+    bright_spot: { type: "string" },
+    question: { type: "string" },
+  },
+  required: ["observations", "bright_spot", "question"],
+  additionalProperties: false,
+};

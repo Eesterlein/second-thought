@@ -1,4 +1,4 @@
-import { nextReflection, summarize, writingQuestions, SafetyRefusal } from "./ai.js";
+import { nextReflection, summarize, writingQuestions, lookBack, SafetyRefusal } from "./ai.js";
 import * as store from "./storage.js";
 import { supabase } from "./supabase.js";
 
@@ -23,6 +23,58 @@ function formatDate(iso, withTime = false) {
   return new Date(iso).toLocaleString(undefined, opts);
 }
 
+const DAY = 24 * 60 * 60 * 1000;
+
+function daysAgo(iso) {
+  return (Date.now() - new Date(iso).getTime()) / DAY;
+}
+
+// "yesterday", "on Tuesday", "on Oct 2"
+function whenWords(iso) {
+  const d = new Date(iso);
+  const today = new Date();
+  const startOf = (x) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const days = Math.round((startOf(today) - startOf(d)) / DAY);
+  if (days <= 0) return "earlier today";
+  if (days === 1) return "yesterday";
+  if (days < 7) return `on ${d.toLocaleDateString(undefined, { weekday: "long" })}`;
+  return `on ${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })}`;
+}
+
+function timeOfDay(iso) {
+  const h = new Date(iso).getHours();
+  if (h < 5) return "late night";
+  if (h < 12) return "morning";
+  if (h < 17) return "afternoon";
+  if (h < 23) return "evening";
+  return "late night";
+}
+
+const FOLLOW_LABELS = { done: "I did it", partly: "Partly", not_yet: "Not yet" };
+
+function followUpText(f) {
+  if (!f || !FOLLOW_LABELS[f.status]) return "";
+  return FOLLOW_LABELS[f.status] + (f.note ? ` — ${f.note}` : "");
+}
+
+// Recent intentions the guide can gently follow up on.
+async function recentMemory() {
+  try {
+    const entries = await store.listEntries();
+    return entries
+      .filter((e) => e.takeaway && daysAgo(e.createdAt) <= 21)
+      .slice(0, 5)
+      .map((e) => ({
+        date: new Date(e.createdAt).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }),
+        title: e.title || "",
+        takeaway: e.takeaway,
+        followUp: followUpText(e.followUp),
+      }));
+  } catch {
+    return []; // memory is a bonus; never block a reflection on it
+  }
+}
+
 let statusTimer;
 function status(msg, { sticky = false } = {}) {
   const s = $("status");
@@ -45,6 +97,8 @@ function checkCrisis(text) {
 function show(view) {
   document.querySelectorAll(".view").forEach((v) => (v.hidden = v.id !== `view-${view}`));
   if (view === "notebook") renderNotebook();
+  if (view === "home") renderCheckIn();
+  if (view === "lookback") renderLookback();
   window.scrollTo(0, 0);
 }
 
@@ -73,7 +127,7 @@ async function guideTurn({ close = false } = {}) {
   const thinking = addBubble("guide thinking", "…");
   setReplyEnabled(false);
   try {
-    const { data, raw } = await nextReflection(session.history, { close });
+    const { data, raw } = await nextReflection(session.history, { close, recent: session.recent });
     thinking.remove();
     session.history.push({ role: "assistant", content: raw });
     session.transcript.push({ role: "guide", text: data.reply, closing: data.is_closing });
@@ -129,6 +183,7 @@ async function startReflect() {
     history: [],
     transcript: [],
     closed: false,
+    recent: await recentMemory(),
   };
   $("chat").replaceChildren();
   $("reply-form").hidden = false;
@@ -184,6 +239,7 @@ function renderWrite() {
     );
   });
   $("write-free").value = draft.freeText || "";
+  $("write-takeaway").value = draft.takeaway || "";
   show("write");
   wrap.querySelector("textarea")?.focus();
 }
@@ -196,7 +252,7 @@ async function startWrite() {
   btn.disabled = true;
   status("Finding some questions for you…", { sticky: true });
   try {
-    const data = await writingQuestions(opening);
+    const data = await writingQuestions(opening, await recentMemory());
     status("");
     if (data.safety_concern) {
       showCrisis();
@@ -237,6 +293,7 @@ async function journalIt() {
 async function saveWrite() {
   draft.questions = draft.questions.map((q, i) => ({ q: q.q, a: $(`wq-${i}`).value.trim() }));
   draft.freeText = $("write-free").value.trim();
+  draft.takeaway = $("write-takeaway").value.trim();
   const written = [...draft.questions.map((q) => q.a), draft.freeText].join(" ");
   checkCrisis(written);
   if (!written.trim()) return status("Write a little something first.");
@@ -291,6 +348,9 @@ async function openEntry(id) {
     el("blockquote", { className: "opening", textContent: e.opening }),
     e.bullets?.length ? el("ul", {}, e.bullets.map((b) => el("li", { textContent: b }))) : null,
     e.takeaway ? el("p", { className: "takeaway", textContent: e.takeaway }) : null,
+    e.followUp && FOLLOW_LABELS[e.followUp.status]
+      ? el("p", { className: "follow", textContent: `Follow-up ${whenWords(e.followUp.at)}: ${followUpText(e.followUp)}` })
+      : null,
     answered.length || e.freeText ? el("h2", { textContent: "In my own words" }) : null,
     answered.map((q) => [
       el("p", { className: "question", textContent: q.q }),
@@ -326,6 +386,192 @@ async function deleteCurrent() {
   btn.dataset.armed = "";
   btn.textContent = "Delete entry";
   show("notebook");
+}
+
+// ---------- check-in on a past intention ----------
+
+let checkinEntry = null;
+let checkinStatus = null;
+
+async function renderCheckIn() {
+  $("checkin").hidden = true;
+  let entries;
+  try {
+    entries = await store.listEntries();
+  } catch {
+    return;
+  }
+  // The newest intention that's at least a few hours old, not too stale,
+  // and hasn't been checked in on yet.
+  checkinEntry = entries.find((e) =>
+    e.takeaway && !e.followUp && daysAgo(e.createdAt) >= 0.25 && daysAgo(e.createdAt) <= 14);
+  if (!checkinEntry) return;
+  checkinStatus = null;
+  $("checkin-when").textContent = `${whenWords(checkinEntry.createdAt)[0].toUpperCase()}${whenWords(checkinEntry.createdAt).slice(1)}, you wrote:`;
+  $("checkin-takeaway").textContent = checkinEntry.takeaway;
+  $("checkin-note").value = "";
+  $("checkin-more").hidden = true;
+  document.querySelectorAll("[data-follow]").forEach((b) => b.setAttribute("aria-pressed", "false"));
+  $("checkin").hidden = false;
+}
+
+async function saveCheckIn(outcome) {
+  if (!checkinEntry) return;
+  const entry = {
+    ...checkinEntry,
+    followUp: { status: outcome, note: $("checkin-note").value.trim(), at: new Date().toISOString() },
+  };
+  try {
+    await store.saveEntry(entry);
+    $("checkin").hidden = true;
+    if (outcome !== "skipped") status("Noted. Thanks for checking in.");
+  } catch (err) {
+    handleError(err);
+  }
+}
+
+// ---------- look back ----------
+
+let lookbackDays = 7;
+
+async function periodEntries() {
+  const entries = await store.listEntries();
+  return entries.filter((e) => daysAgo(e.createdAt) <= lookbackDays);
+}
+
+function stat(num, label) {
+  return el("div", { className: "stat" },
+    el("span", { className: "num", textContent: String(num) }),
+    el("span", { className: "label", textContent: label }));
+}
+
+async function renderLookback() {
+  document.querySelectorAll("[data-period]").forEach((b) =>
+    b.setAttribute("aria-pressed", String(Number(b.dataset.period) === lookbackDays)));
+  $("lookback-insight").replaceChildren();
+  let entries;
+  try {
+    entries = await periodEntries();
+  } catch (err) {
+    return handleError(err);
+  }
+  $("lookback-ai").hidden = entries.length === 0;
+  if (!entries.length) {
+    $("lookback-stats").replaceChildren(
+      el("p", { className: "muted", textContent: "No entries in this stretch yet. Patterns will show up here as you write." }));
+    return;
+  }
+
+  const count = (list) => {
+    const m = new Map();
+    for (const x of list) m.set(x, (m.get(x) || 0) + 1);
+    return [...m].sort((a, b) => b[1] - a[1]);
+  };
+  const feelings = count(entries.flatMap((e) => (e.feelings || []).map((f) => f.toLowerCase())));
+  const times = count(entries.map((e) => timeOfDay(e.createdAt)));
+  const intentions = entries.filter((e) => e.takeaway);
+  const followed = intentions.filter((e) => ["done", "partly"].includes(e.followUp?.status));
+
+  $("lookback-stats").replaceChildren(
+    el("div", { className: "stats" },
+      stat(entries.length, entries.length === 1 ? "entry" : "entries"),
+      stat(times[0][0], "when you write most"),
+      intentions.length ? stat(`${followed.length} of ${intentions.length}`, "intentions followed through") : null,
+    ),
+    feelings.length
+      ? el("div", {},
+          el("p", { className: "fineprint", textContent: "Feelings that came up" }),
+          el("div", { className: "tags" },
+            feelings.slice(0, 8).map(([f, n]) => el("span", { className: "tag", textContent: n > 1 ? `${f} ×${n}` : f }))))
+      : null,
+  );
+}
+
+async function runLookback() {
+  const btn = $("lookback-ai");
+  btn.disabled = true;
+  status("Reading back through your entries…", { sticky: true });
+  try {
+    const entries = (await periodEntries()).slice(0, 40).reverse(); // oldest first
+    const data = await lookBack(entries.map((e) => ({
+      date: new Date(e.createdAt).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" }),
+      timeOfDay: timeOfDay(e.createdAt),
+      title: e.title,
+      feelings: e.feelings || [],
+      opening: e.opening,
+      notes: [
+        ...(e.bullets || []),
+        ...(e.questions || []).filter((q) => q.a).map((q) => q.a),
+        e.freeText || "",
+      ].join(" ").slice(0, 1200),
+      takeaway: e.takeaway || "",
+      followUp: followUpText(e.followUp),
+    })), lookbackDays === 7 ? "the past week" : "the past month");
+    status("");
+    $("lookback-insight").replaceChildren(
+      el("div", { className: "insight" },
+        el("ul", {}, data.observations.map((o) => el("li", { textContent: o }))),
+        el("p", { textContent: data.bright_spot }),
+        el("p", { className: "question", textContent: data.question }),
+        el("button", {
+          className: "link",
+          textContent: "Write about this",
+          onclick: () => {
+            $("opening").value = data.question + "\n\n";
+            show("home");
+            $("opening").focus();
+          },
+        }),
+      ),
+    );
+  } catch (err) {
+    handleError(err);
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ---------- daily reminder (calendar file) ----------
+
+function addReminder() {
+  const [h, m] = ($("reminder-time").value || "20:30").split(":").map(Number);
+  const start = new Date();
+  start.setHours(h, m, 0, 0);
+  if (start < new Date()) start.setDate(start.getDate() + 1);
+  const pad = (n) => String(n).padStart(2, "0");
+  const local = (d) =>
+    `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}T${pad(d.getHours())}${pad(d.getMinutes())}00`;
+  const end = new Date(start.getTime() + 10 * 60 * 1000);
+  const url = location.origin + location.pathname;
+  const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+/, "");
+  const ics = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//Second Thought//Daily reminder//EN",
+    "BEGIN:VEVENT",
+    `UID:${store.newId()}@second-thought`,
+    `DTSTAMP:${stamp}`,
+    `DTSTART:${local(start)}`,
+    `DTEND:${local(end)}`,
+    "RRULE:FREQ=DAILY",
+    "SUMMARY:Second Thought",
+    `DESCRIPTION:A few minutes to reflect on your day. ${url}`,
+    `URL:${url}`,
+    "BEGIN:VALARM",
+    "TRIGGER:PT0M",
+    "ACTION:DISPLAY",
+    "DESCRIPTION:Time for a second thought",
+    "END:VALARM",
+    "END:VEVENT",
+    "END:VCALENDAR",
+  ].join("\r\n");
+  const a = el("a", {
+    href: URL.createObjectURL(new Blob([ics], { type: "text/calendar" })),
+    download: "second-thought-reminder.ics",
+  });
+  a.click();
+  URL.revokeObjectURL(a.href);
+  $("settings-msg").textContent = "Open the downloaded file to add the reminder to your calendar.";
 }
 
 // ---------- settings ----------
@@ -384,6 +630,26 @@ $("save-write").onclick = saveWrite;
 $("delete-entry").onclick = deleteCurrent;
 
 $("export").onclick = exportEntries;
+$("reminder-add").onclick = addReminder;
+
+document.querySelectorAll("[data-follow]").forEach((b) => {
+  b.onclick = () => {
+    checkinStatus = b.dataset.follow;
+    document.querySelectorAll("[data-follow]").forEach((x) => x.setAttribute("aria-pressed", String(x === b)));
+    $("checkin-more").hidden = false;
+    $("checkin-note").focus();
+  };
+});
+$("checkin-save").onclick = () => checkinStatus && saveCheckIn(checkinStatus);
+$("checkin-skip").onclick = () => saveCheckIn("skipped");
+
+document.querySelectorAll("[data-period]").forEach((b) => {
+  b.onclick = () => {
+    lookbackDays = Number(b.dataset.period);
+    renderLookback();
+  };
+});
+$("lookback-ai").onclick = runLookback;
 $("import").onchange = (ev) => ev.target.files[0] && importEntries(ev.target.files[0]);
 
 // ---------- accounts ----------
