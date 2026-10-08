@@ -1,1 +1,3 @@
 .DS_Store
+# Supabase settings are added at publish time (see .github/workflows/pages.yml)
+js/config.js

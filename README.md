@@ -10,16 +10,17 @@ See [PLAN.md](PLAN.md) for the roadmap and business model.
 python3 -m http.server 8000
 ```
 
-Then open http://localhost:8000, go to **Settings**, and paste a Claude API key from console.anthropic.com.
+Before the first run, copy `js/config.example.js` to `js/config.js` and fill in your Supabase project URL and publishable key. Then open http://localhost:8000.
 
 ## How it's built
 
 - Plain HTML, CSS and JavaScript with no build step, so it can be hosted on GitHub Pages
-- `js/prompts.js`: the guide's instructions and tone (the part to tune most)
-- `js/ai.js`: Claude API calls (Claude Haiku 5.5)
-- `js/storage.js`: entries saved in the browser (localStorage), plus export/import
 - `js/app.js`: screens and flow
+- `js/storage.js`: entries saved to each user's account (Supabase), plus export/import
+- `js/ai.js`: requests to the guide server function
+- `supabase/functions/guide/`: the server function that calls Claude (Claude Haiku 5.5); `prompts.ts` holds the guide's tone, the part to tune most
+- `supabase/migrations/`: database tables and privacy rules
 
-> This prototype calls the API from the browser with your own key. Before sharing it publicly, move the API calls behind a small backend so the key stays private.
+Accounts and entries live in Supabase. The Claude API key is stored only as a Supabase secret, and each person has a daily limit on AI use. The site is published to GitHub Pages by `.github/workflows/pages.yml`, which adds the Supabase settings from repository secrets.
 
 Second Thought is a journal, not therapy. If you're in crisis in the US, call or text 988.
