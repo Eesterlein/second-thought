@@ -195,3 +195,11 @@ label { display: block; font-weight: 500; margin-bottom: 6px; }
 .insight .question { margin-top: 12px; }
 .follow { color: var(--muted); font-size: 0.9rem; }
 input[type="time"] { width: auto; }
+
+/* Privacy / terms pages and footer */
+.legal { padding-bottom: 64px; }
+.legal h2 { font-size: 1.2rem; margin-top: 32px; }
+.legal li { margin-bottom: 6px; }
+.legal a, .site-footer a, .fineprint a { color: inherit; text-underline-offset: 2px; }
+.callout { background: var(--guide-bg); border-radius: 12px; padding: 4px 16px; margin: 16px 0; }
+.site-footer { max-width: 720px; margin: 0 auto; padding: 0 16px 32px; text-align: center; }

@@ -1,0 +1,13 @@
+# Weekly PRs to keep pinned GitHub Action SHAs current. The cooldown skips
+# brand-new releases for a week, so a poisoned release is usually pulled first.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]

@@ -1,0 +1,179 @@
+# .github/workflows/security-scan.yml
+#
+# Layered security scan on every push to main, every pull request, and weekly
+# (new CVEs are published even when our code doesn't change).
+#
+# Hardening choices, each one a lesson from real incidents:
+#   * Every third-party action is pinned to a full 40-character commit SHA,
+#     with the human-readable version in a comment. Tags can be moved by an
+#     attacker (trivy-action, March 2026); SHAs cannot. Dependabot keeps
+#     these SHAs up to date (see dependabot.yml).
+#   * `permissions: {}` at the top = the token can do nothing by default.
+#     Each job asks only for what it needs.
+#   * `persist-credentials: false` on checkout so the token is not left on
+#     disk for later steps to steal.
+#   * No secrets are used anywhere in this workflow. A scanner never needs
+#     deployment credentials.
+#   * No ${{ github.event.* }} values inside `run:` blocks (script injection).
+#   * Runs only on GitHub-hosted runners, which are wiped after every job.
+
+name: Security scan
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    - cron: "17 13 * * 1" # Mondays 13:17 UTC (06:17 Mountain)
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: security-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  trivy:
+    name: Trivy (dependencies, secrets, config)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read # read the code
+      security-events: write # upload results to the Security tab (public repos)
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Trivy report (SARIF)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.76.2 # pin the scanner binary too, never "latest"
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,misconfig
+          format: sarif
+          output: trivy.sarif
+          exit-code: "0"
+
+      # Code scanning upload is free on public repos. Private repos need
+      # GitHub Code Security, so we skip it there and rely on the gate below.
+      - name: Upload to Security tab
+        if: always() && !github.event.repository.private
+        uses: github/codeql-action/upload-sarif@1bd86f2fdb4b86187fa4059f16f31a3202acc9ea # v4.39.4
+        with:
+          sarif_file: trivy.sarif
+          category: trivy
+
+      - name: Gate — fail on HIGH/CRITICAL
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          version: v0.76.2
+          skip-setup-trivy: true
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,misconfig
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          format: table
+          exit-code: "1"
+
+  gitleaks:
+    name: Gitleaks (secrets in history)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # full history: old commits can still hold secrets
+          persist-credentials: false
+
+      # Install a pinned release and verify its checksum, instead of a
+      # third-party action (gitleaks-action needs a paid license for orgs).
+      - name: Install gitleaks 8.30.1 (checksum verified)
+        env:
+          GL_VERSION: "8.30.1"
+          GL_SHA256: "551f6fc83ea457d62a0d98237cbad105af8d557003051f41f3e7ca7b3f2470eb"
+        run: |
+          cd "$RUNNER_TEMP"
+          curl -sSfL -o gitleaks.tar.gz \
+            "https://github.com/gitleaks/gitleaks/releases/download/v${GL_VERSION}/gitleaks_${GL_VERSION}_linux_x64.tar.gz"
+          echo "${GL_SHA256}  gitleaks.tar.gz" | sha256sum -c -
+          tar -xzf gitleaks.tar.gz gitleaks
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      - name: Scan full history
+        run: gitleaks git --redact --no-banner -v --exit-code 1 .
+
+  sast:
+    name: Semgrep + Bandit (static analysis)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+
+      - name: Install pinned scanner versions
+        run: python -m pip install --disable-pip-version-check "semgrep==1.186.0" "bandit==1.9.4"
+
+      # --severity ERROR blocks only high-severity rules; warnings still print.
+      - name: Semgrep
+        run: semgrep scan --config p/default --metrics=off --severity ERROR --error .
+
+      - name: Bandit (Python, high severity blocks)
+        run: |
+          if find . -name '*.py' -not -path './.venv/*' -not -path './venv/*' | grep -q .; then
+            bandit -r . -x './.venv,./venv,./node_modules' -lll
+          else
+            echo "No Python files; skipping Bandit."
+          fi
+
+  zizmor:
+    name: zizmor (workflow security)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: zizmorcore/zizmor-action@45d7276c9ca790aabd705e31ca99c6185c3e76dd # v0.8.1
+        with:
+          version: "1.32.0" # pin the tool, not just the action
+          advanced-security: false # print + fail instead of uploading SARIF
+          min-severity: medium
+
+  # Dynamic scan of a deployed copy. Runs only when the repository variable
+  # ZAP_TARGET_URL is set (Settings → Secrets and variables → Actions →
+  # Variables), and only on schedule / manual runs, never on pull requests.
+  # Point it ONLY at a county-owned staging URL that IT has approved.
+  zap:
+    name: OWASP ZAP baseline (DAST)
+    if: vars.ZAP_TARGET_URL != '' && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: zaproxy/action-baseline@de8ad967d3548d44ef623df22cf95c3b0baf8b25 # v0.15.0
+        with:
+          target: ${{ vars.ZAP_TARGET_URL }}
+          allow_issue_writing: false # least privilege: no need for issues: write
+          fail_action: true
+          cmd_options: "-I" # warnings don't fail; only rules set to FAIL do
