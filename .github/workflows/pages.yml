@@ -18,6 +18,7 @@ jobs:
       contents: read
       pages: write # publish the site
       id-token: write # required by deploy-pages
+      actions: read # deploy-pages looks up this run's uploaded site bundle
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
